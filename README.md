@@ -127,6 +127,14 @@ show status
 show running-config
 show candidate-config
 show diff
+show interfaces status
+show interfaces ethernet 1/0/1
+show vlan brief
+show vlan id 10
+show port-channel
+show ip interface
+show version
+show capabilities
 configure terminal
 commit check
 commit

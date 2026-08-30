@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Literal
@@ -7,6 +8,7 @@ from typing import Literal
 from .client import MercSwitchClient
 from .config import (
     config_diff,
+    format_ports,
     parse_config,
     parse_ports,
     port_vlan_memberships,
@@ -43,9 +45,57 @@ def normalize_exec_command(command: str) -> str:
         ("show", "configure", "commit", "abort", "write", "exit", "logout", "quit", "help"),
     )
     if root == "show":
-        if len(words) != 2:
-            raise MercSwitchError("usage: show running-config|candidate-config|diff|status")
-        return f"show {_resolve_keyword(words[1], ('running-config', 'candidate-config', 'diff', 'status'))}"
+        if len(words) < 2:
+            raise MercSwitchError(
+                "usage: show running-config|candidate-config|diff|status|interfaces|vlan|"
+                "port-channel|ip|version|capabilities"
+            )
+        subcommand = _resolve_keyword(
+            words[1],
+            (
+                "running-config",
+                "candidate-config",
+                "diff",
+                "status",
+                "interfaces",
+                "vlan",
+                "port-channel",
+                "ip",
+                "version",
+                "capabilities",
+            ),
+        )
+        rest = words[2:]
+        if subcommand == "interfaces":
+            if not rest:
+                return "show interfaces"
+            if rest[0].lower() in {"status", "summary"} or "status".startswith(
+                rest[0].lower()
+            ):
+                if len(rest) != 1:
+                    raise MercSwitchError("usage: show interfaces status")
+                return "show interfaces status"
+            if rest[0].lower() == "ethernet" or "ethernet".startswith(rest[0].lower()):
+                rest = rest[1:]
+            if len(rest) != 1:
+                raise MercSwitchError("usage: show interfaces [ethernet] 1/0/PORT")
+            return f"show interfaces ethernet {rest[0]}"
+        if subcommand == "vlan":
+            if not rest:
+                return "show vlan brief"
+            qualifier = _resolve_keyword(rest[0], ("brief", "id"))
+            if qualifier == "brief" and len(rest) == 1:
+                return "show vlan brief"
+            if qualifier == "id" and len(rest) == 2:
+                return f"show vlan id {rest[1]}"
+            raise MercSwitchError("usage: show vlan [brief|id VLAN]")
+        if subcommand == "ip":
+            if len(rest) == 1 and _resolve_keyword(rest[0], ("interface",)) == "interface":
+                return "show ip interface"
+            raise MercSwitchError("usage: show ip interface")
+        if rest:
+            raise MercSwitchError(f"unexpected arguments after show {subcommand}")
+        return f"show {subcommand}"
     if root == "configure":
         if len(words) < 2:
             raise MercSwitchError("usage: configure terminal|replace")
@@ -101,6 +151,69 @@ class CommandSession:
     def _require_admin(self) -> None:
         if self.role != "admin":
             raise MercSwitchError("this command requires the admin role")
+
+    def _switchport_description(self, index: int) -> tuple[str, str, str]:
+        port = self.running.ports[index]
+        tagged, untagged = port_vlan_memberships(self.running.vlans, index)
+        if untagged == (port.pvid,) and not tagged:
+            return "access", str(port.pvid), str(port.pvid)
+        if untagged == (port.pvid,):
+            allowed = format_ports((*tagged, port.pvid))
+            return "trunk", str(port.pvid), allowed
+        return "hybrid", str(port.pvid), format_ports((*tagged, *untagged))
+
+    def _show_interfaces(self) -> str:
+        lines = ["Port    Admin Link Configured Actual      Flow PVID Mode   VLANs"]
+        for index, port in sorted(self.running.ports.items()):
+            mode, pvid, vlans = self._switchport_description(index)
+            lines.append(
+                f"1/0/{index:<3} {'up' if port.enabled else 'down':<5} "
+                f"{'up' if port.link_up else 'down':<4} {port.speed:<10} "
+                f"{port.actual_speed:<11} {'on' if port.flow_control else 'off':<4} "
+                f"{pvid:<4} {mode:<6} {vlans}"
+            )
+        return "\n".join(lines) + "\n"
+
+    def _show_interface(self, name: str) -> str:
+        match = re.fullmatch(r"(?:ethernet\s+)?1/0/(\d+)", name, re.IGNORECASE)
+        if not match:
+            raise MercSwitchError("interface must be ethernet 1/0/PORT")
+        index = int(match.group(1))
+        port = self.running.ports.get(index)
+        if port is None:
+            raise MercSwitchError(f"interface ethernet 1/0/{index} does not exist")
+        capability = next(
+            (item for item in self.running.capabilities.ports if item.index == index), None
+        )
+        mode, pvid, vlans = self._switchport_description(index)
+        return (
+            f"Ethernet 1/0/{index}\n"
+            f"  admin state: {'up' if port.enabled else 'down'}\n"
+            f"  link state: {'up' if port.link_up else 'down'}\n"
+            f"  media: {capability.media if capability else 'unknown'}\n"
+            f"  configured speed: {port.speed}\n"
+            f"  operational speed: {port.actual_speed}\n"
+            f"  flow control: {'enabled' if port.flow_control else 'disabled'}\n"
+            f"  switchport mode: {mode}\n"
+            f"  PVID/native VLAN: {pvid}\n"
+            f"  VLANs: {vlans}\n"
+        )
+
+    def _show_vlans(self, vid: int | None = None) -> str:
+        if vid is not None:
+            vlan = self.running.vlans.get(vid)
+            if vlan is None:
+                raise MercSwitchError(f"VLAN {vid} does not exist")
+            vlans = ((vid, vlan),)
+        else:
+            vlans = tuple(sorted(self.running.vlans.items()))
+        lines = ["VLAN Name         Tagged     Untagged"]
+        for vlan_id, vlan in vlans:
+            lines.append(
+                f"{vlan_id:<4} {vlan.name[:12]:<12} "
+                f"{format_ports(vlan.tagged):<10} {format_ports(vlan.untagged)}"
+            )
+        return "\n".join(lines) + "\n"
 
     def _configure(self, line: str) -> str:
         if line in {"end", "exit"}:
@@ -261,6 +374,9 @@ class CommandSession:
         if line in {"help", "?"}:
             return (
                 "show running-config|candidate-config|diff|status\n"
+                "show interfaces [status|ethernet 1/0/PORT]\n"
+                "show vlan [brief|id VLAN]\n"
+                "show port-channel|ip interface|version|capabilities\n"
                 "configure terminal\nconfigure replace <file>\n"
                 "commit [check] [force] [allow-management-change]\nabort\nwrite memory\nexit"
             )
@@ -275,6 +391,53 @@ class CommandSession:
             return (
                 f"{identity.vendor} {identity.model} hw {identity.hardware} fw {identity.firmware}\n"
                 f"ports {self.running.capabilities.port_count}; state {self.running.managed_hash()}\n"
+            )
+        if line in {"show interfaces", "show interfaces status"}:
+            return self._show_interfaces()
+        if line.startswith("show interfaces ethernet "):
+            return self._show_interface(line.split(maxsplit=3)[3])
+        if line == "show vlan brief":
+            return self._show_vlans()
+        if line.startswith("show vlan id "):
+            return self._show_vlans(int(line.rsplit(" ", 1)[1]))
+        if line == "show port-channel":
+            lines = ["Group Members"]
+            lines.extend(
+                f"{group:<5} {format_ports(lag.members)}"
+                for group, lag in sorted(self.running.lags.items())
+            )
+            return "\n".join(lines) + "\n"
+        if line == "show ip interface":
+            management = self.running.management
+            source = "DHCP" if management.dhcp else "static"
+            return (
+                f"Vlan{management.vlan}\n"
+                f"  address source: {source}\n"
+                f"  IP address: {management.address or 'unassigned'}\n"
+                f"  netmask: {management.netmask or 'unassigned'}\n"
+                f"  default gateway: {management.gateway or 'none'}\n"
+                f"  fallback IP: {'enabled' if management.fallback_enabled else 'disabled'}\n"
+            )
+        if line == "show version":
+            identity = self.running.identity
+            return (
+                f"MercSwitch adapter {identity.adapter}\n"
+                f"{identity.vendor} {identity.model}\n"
+                f"Hardware: {identity.hardware}\nFirmware: {identity.firmware}\n"
+                f"MAC address: {identity.mac or 'unknown'}\n"
+            )
+        if line == "show capabilities":
+            capabilities = self.running.capabilities
+            media = ", ".join(
+                f"1/0/{port.index}:{port.media}" for port in capabilities.ports
+            )
+            return (
+                f"ports: {capabilities.port_count}\n"
+                f"media: {media}\n"
+                f"maximum VLANs: {capabilities.max_vlans}\n"
+                f"LAG groups: {format_ports(sorted(capabilities.lag_members))}\n"
+                f"fallback IP: {'supported' if capabilities.supports_fallback_ip else 'unsupported'}\n"
+                f"PoE detected: {'yes' if capabilities.poe_capable else 'no'}\n"
             )
         if line == "configure terminal":
             self._require_admin()

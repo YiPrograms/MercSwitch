@@ -69,6 +69,42 @@ async def test_interactive_switchport_trunk_semantics(sample_state):
 
 
 @pytest.mark.asyncio
+async def test_show_interface_summary_and_detail(sample_state):
+    session = CommandSession(FakeClient(), sample_state)  # type: ignore[arg-type]
+
+    summary = await session.execute("show int status")
+    detail = await session.execute("sh int e 1/0/9")
+
+    assert "Port    Admin Link" in summary
+    assert "1/0/9" in summary
+    assert "Ethernet 1/0/9" in detail
+    assert "media: sfp" in detail
+    assert "switchport mode: access" in detail
+
+
+@pytest.mark.asyncio
+async def test_show_vlan_ip_version_and_capabilities(sample_state):
+    session = CommandSession(FakeClient(), sample_state)  # type: ignore[arg-type]
+
+    assert "VLAN Name" in await session.execute("show vl br")
+    assert "Default" in await session.execute("show vl id 1")
+    assert "IP address: 192.168.2.251" in await session.execute("show ip int")
+    assert "MERCURY SE109 Pro" in await session.execute("show ver")
+    assert "maximum VLANs: 32" in await session.execute("show cap")
+    assert "Group Members" in await session.execute("show port")
+
+
+@pytest.mark.asyncio
+async def test_show_rejects_missing_interface_and_ambiguous_v_prefix(sample_state):
+    session = CommandSession(FakeClient(), sample_state)  # type: ignore[arg-type]
+
+    with pytest.raises(MercSwitchError, match="does not exist"):
+        await session.execute("show int 1/0/99")
+    with pytest.raises(MercSwitchError, match="ambiguous command 'v'.*vlan, version"):
+        await session.execute("show v")
+
+
+@pytest.mark.asyncio
 async def test_writer_lock_serializes_operations():
     lock = asyncio.Lock()
     active = 0
