@@ -1,102 +1,31 @@
 # MercSwitch
 
-`mercswitchd` gives compatible MERCURY, TP-Link, and FAST web-managed switches a Cisco-like
-SSH CLI and read-only SNMPv2c metrics. The daemon talks to the switch over its web interface;
-operators talk directly to the daemon over SSH.
+`mercswitchd` gives compatible MERCURY, TP-Link, and FAST web-managed switches a
+Cisco-like SSH CLI and read-only SNMPv2c metrics. It talks to the switch through
+the switch's web interface, so no browser is required.
 
-> Do not run the standalone `mercswitchctl` against a switch while `mercswitchd` manages it.
+> Do not run `mercswitchctl` against a switch while `mercswitchd` is managing it.
 
 ## Quick start
 
-Requirements: Docker with Compose, `ssh-keygen`, Bash, and a host which can reach the switch.
+You need Docker with Compose and a host that can reach the switch.
 
-Paste this entire block into a shell. It securely prompts for the switch password and SNMP
-community, generates an administrator SSH key if needed, writes the complete Compose setup to
-`$HOME/mercswitch`, and starts the published image.
+Create a working directory and an SSH key for the daemon administrator:
 
-```sh
-bash <<'QUICKSTART'
-set -euo pipefail
+```bash
+mkdir -p mercswitch/deploy/authorized_keys mercswitch/deploy/secrets
+cd mercswitch
 
-INSTALL_DIR="$HOME/mercswitch"
-SSH_KEY="$HOME/.ssh/mercswitch_admin"
-
-read -r -p "Docker host LAN IP: " DAEMON_BIND_IP </dev/tty
-read -r -p "Switch URL [http://192.168.2.251/]: " SWITCH_URL </dev/tty
-SWITCH_URL="${SWITCH_URL:-http://192.168.2.251/}"
-read -r -p "Switch username [admin]: " SWITCH_USERNAME </dev/tty
-SWITCH_USERNAME="${SWITCH_USERNAME:-admin}"
-read -r -s -p "Switch password: " SWITCH_PASSWORD </dev/tty
-printf '\n'
-read -r -s -p "SNMP community: " SNMP_COMMUNITY </dev/tty
-printf '\n'
-
-if [ -z "$DAEMON_BIND_IP" ] || [ -z "$SWITCH_PASSWORD" ] || [ -z "$SNMP_COMMUNITY" ]; then
-  echo "Host IP, switch password, and SNMP community are required." >&2
-  exit 1
+if [ ! -f "$HOME/.ssh/mercswitch_admin" ]; then
+  ssh-keygen -t ed25519 -f "$HOME/.ssh/mercswitch_admin" -N ""
 fi
+cp "$HOME/.ssh/mercswitch_admin.pub" deploy/authorized_keys/admin
+: > deploy/authorized_keys/viewer
+```
 
-mkdir -p \
-  "$INSTALL_DIR/deploy/authorized_keys" \
-  "$INSTALL_DIR/deploy/secrets" \
-  "$HOME/.ssh"
-chmod 700 "$HOME/.ssh" "$INSTALL_DIR/deploy/secrets"
+Save the following as `compose.yaml`:
 
-if [ ! -f "$SSH_KEY" ]; then
-  ssh-keygen -q -t ed25519 -N "" -f "$SSH_KEY" -C "mercswitch-admin"
-fi
-cp "$SSH_KEY.pub" "$INSTALL_DIR/deploy/authorized_keys/admin"
-: > "$INSTALL_DIR/deploy/authorized_keys/viewer"
-
-umask 077
-printf '%s' "$SWITCH_PASSWORD" > "$INSTALL_DIR/deploy/secrets/switch_password"
-printf '%s' "$SNMP_COMMUNITY" > "$INSTALL_DIR/deploy/secrets/snmp_community"
-unset SWITCH_PASSWORD SNMP_COMMUNITY
-umask 022
-
-cat > "$INSTALL_DIR/.env" <<EOF
-DAEMON_BIND_IP=$DAEMON_BIND_IP
-MERCSWITCH_IMAGE=ghcr.io/yiprograms/mercswitch:latest
-EOF
-
-cat > "$INSTALL_DIR/deploy/mercswitchd.toml" <<EOF
-data_dir = "/var/lib/mercswitch"
-
-[device]
-url = "$SWITCH_URL"
-username = "$SWITCH_USERNAME"
-password_file = "/run/secrets/switch_password"
-verify_tls = false
-
-[ssh]
-host = "0.0.0.0"
-port = 2222
-host_key = "/var/lib/mercswitch/ssh_host_ed25519_key"
-
-[ssh.users.admin]
-role = "admin"
-password_hash = ""
-authorized_keys_file = "/etc/mercswitch/authorized_keys/admin"
-
-[ssh.users.viewer]
-role = "viewer"
-password_hash = ""
-authorized_keys_file = "/etc/mercswitch/authorized_keys/viewer"
-
-[snmp]
-host = "0.0.0.0"
-port = 1161
-community_file = "/run/secrets/snmp_community"
-name = "mercswitch"
-contact = ""
-location = ""
-
-[poll]
-summary_interval = 15.0
-detail_interval = 10.0
-EOF
-
-cat > "$INSTALL_DIR/compose.yaml" <<'EOF'
+```yaml
 services:
   mercswitchd:
     image: ${MERCSWITCH_IMAGE:-ghcr.io/yiprograms/mercswitch:latest}
@@ -128,28 +57,87 @@ secrets:
     file: ./deploy/secrets/switch_password
   snmp_community:
     file: ./deploy/secrets/snmp_community
-EOF
+```
 
-cd "$INSTALL_DIR"
+Save the following as `deploy/mercswitchd.toml`. Change the switch URL and
+username if necessary:
+
+```toml
+data_dir = "/var/lib/mercswitch"
+
+[device]
+url = "http://192.168.2.251/"
+username = "admin"
+password_file = "/run/secrets/switch_password"
+verify_tls = false
+
+[ssh]
+host = "0.0.0.0"
+port = 2222
+host_key = "/var/lib/mercswitch/ssh_host_ed25519_key"
+
+[ssh.users.admin]
+role = "admin"
+password_hash = ""
+authorized_keys_file = "/etc/mercswitch/authorized_keys/admin"
+
+[ssh.users.viewer]
+role = "viewer"
+password_hash = ""
+authorized_keys_file = "/etc/mercswitch/authorized_keys/viewer"
+
+[snmp]
+host = "0.0.0.0"
+port = 1161
+community_file = "/run/secrets/snmp_community"
+name = "mercswitch"
+contact = ""
+location = ""
+
+[poll]
+summary_interval = 15.0
+detail_interval = 10.0
+```
+
+Create `.env` with the LAN address on which Docker should publish SSH and SNMP:
+
+```dotenv
+DAEMON_BIND_IP=192.168.2.10
+MERCSWITCH_IMAGE=ghcr.io/yiprograms/mercswitch:latest
+```
+
+Create the two Docker secrets. These commands prompt without displaying the
+values:
+
+```bash
+read -rsp 'Switch password: ' SWITCH_PASSWORD; printf '\n'
+printf '%s' "$SWITCH_PASSWORD" > deploy/secrets/switch_password
+unset SWITCH_PASSWORD
+
+read -rsp 'SNMP community: ' SNMP_COMMUNITY; printf '\n'
+printf '%s' "$SNMP_COMMUNITY" > deploy/secrets/snmp_community
+unset SNMP_COMMUNITY
+
+chmod 600 deploy/secrets/switch_password deploy/secrets/snmp_community
+```
+
+Start MercSwitch:
+
+```sh
 docker compose pull
 docker compose up -d
 docker compose ps
-
-printf '\nMercSwitch is starting. Connect with:\n'
-printf 'ssh -i %s -p 2222 admin@%s\n' "$SSH_KEY" "$DAEMON_BIND_IP"
-printf 'Logs: cd %s && docker compose logs -f mercswitchd\n' "$INSTALL_DIR"
-QUICKSTART
 ```
 
-## Use it
+## Connect
 
-Connect to the Cisco-like shell using the command printed by quick start:
+Replace `192.168.2.10` below with `DAEMON_BIND_IP` from `.env`:
 
 ```sh
-ssh -i "$HOME/.ssh/mercswitch_admin" -p 2222 admin@HOST_IP
+ssh -i "$HOME/.ssh/mercswitch_admin" -p 2222 admin@192.168.2.10
 ```
 
-Useful interactive commands:
+Useful commands in the Cisco-like shell:
 
 ```text
 show status
@@ -166,33 +154,36 @@ exit
 Run a one-shot command or replace the managed configuration:
 
 ```sh
-ssh -i "$HOME/.ssh/mercswitch_admin" -p 2222 admin@HOST_IP "show running-config"
-ssh -i "$HOME/.ssh/mercswitch_admin" -p 2222 admin@HOST_IP \
+ssh -i "$HOME/.ssh/mercswitch_admin" -p 2222 admin@192.168.2.10 \
+  "show running-config"
+
+ssh -i "$HOME/.ssh/mercswitch_admin" -p 2222 admin@192.168.2.10 \
   "configure replace stdin" < replacement.cli
 ```
 
 Query read-only SNMP metrics:
 
 ```sh
-snmpwalk -v2c \
-  -c "$(cat "$HOME/mercswitch/deploy/secrets/snmp_community")" \
-  udp:HOST_IP:1161 1.3.6.1.2.1
+snmpwalk -v2c -c 'YOUR_SNMP_COMMUNITY' \
+  udp:192.168.2.10:1161 1.3.6.1.2.1
 ```
 
-Manage the container:
+## Container operations
 
 ```sh
-cd "$HOME/mercswitch"
 docker compose logs -f mercswitchd
 docker compose exec mercswitchd mercswitchd healthcheck
 docker compose pull && docker compose up -d
 docker compose down
 ```
 
+The named volume preserves cached state, backups, journals, and the daemon SSH
+host key across container updates.
+
 ## Standalone direct mode
 
-For one-time administration without the daemon, run the controller directly from the same
-GHCR image. It prompts for the switch password:
+Use `mercswitchctl` for one-time administration when the daemon is not managing
+the switch. It connects directly and prompts for the switch password:
 
 ```sh
 docker run --rm -it \
@@ -206,14 +197,14 @@ docker run --rm -it \
   --url http://192.168.2.251/ shell
 ```
 
-## Safety and support
+## Safety and device support
 
-- Every write downloads a native backup, checks drift, applies ordered phases, reads changes
-  back, saves to flash, and verifies the final managed state.
+- Every write downloads a native backup, checks for drift, applies changes in
+  dependency order, reads them back, saves to flash, and verifies the result.
 - Management address or VLAN changes require explicit confirmation.
 - PoE, QoS, mirroring, isolation, and loop protection remain unchanged.
-- Published non-Pro SE106, SE106P, SE109, and SE109P units are unmanaged. Compatible Pro models
-  must expose the recognized RPM/CGI firmware schema.
+- Published non-Pro SE106, SE106P, SE109, and SE109P units are unmanaged.
+  Compatible Pro models must expose the recognized RPM/CGI firmware schema.
 
-Images are published as `ghcr.io/yiprograms/mercswitch:latest` for `linux/amd64` and
-`linux/arm64`. Both architectures are built on native GitHub-hosted runners without emulation.
+The GHCR image supports `linux/amd64` and `linux/arm64`. Both variants are built
+on native GitHub-hosted runners without emulation.
