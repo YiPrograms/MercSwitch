@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,11 +10,16 @@ from pathlib import Path
 class DeviceSettings:
     url: str
     username: str = "admin"
-    password_file: str = "/run/secrets/switch_password"
+    password_env: str = "MERCSWITCH_SWITCH_PASSWORD"
+    password_file: str = ""
     verify_tls: bool = False
 
     def password(self) -> str:
-        return Path(self.password_file).read_text().rstrip("\r\n")
+        if self.password_env and self.password_env in os.environ:
+            return os.environ[self.password_env]
+        if self.password_file:
+            return Path(self.password_file).read_text().rstrip("\r\n")
+        raise ValueError(f"set the {self.password_env} environment variable")
 
 
 @dataclass(slots=True)
@@ -35,13 +41,18 @@ class SshSettings:
 class SnmpSettings:
     host: str = "0.0.0.0"
     port: int = 1161
-    community_file: str = "/run/secrets/snmp_community"
+    community_env: str = "MERCSWITCH_SNMP_COMMUNITY"
+    community_file: str = ""
     name: str = "mercswitch"
     contact: str = ""
     location: str = ""
 
     def community(self) -> str:
-        return Path(self.community_file).read_text().rstrip("\r\n")
+        if self.community_env and self.community_env in os.environ:
+            return os.environ[self.community_env]
+        if self.community_file:
+            return Path(self.community_file).read_text().rstrip("\r\n")
+        raise ValueError(f"set the {self.community_env} environment variable")
 
 
 @dataclass(slots=True)

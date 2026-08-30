@@ -3,7 +3,6 @@ data_dir = "/var/lib/mercswitch"
 [device]
 url = "http://192.168.2.251/"
 username = "admin"
-password_file = "/run/secrets/switch_password"
 verify_tls = false
 
 [ssh]
@@ -24,7 +23,6 @@ authorized_keys_file = "/etc/mercswitch/authorized_keys/viewer"
 [snmp]
 host = "0.0.0.0"
 port = 1161
-community_file = "/run/secrets/snmp_community"
 name = "mercswitch"
 contact = ""
 location = ""
@@ -32,4 +30,3 @@ location = ""
 [poll]
 summary_interval = 15.0
 detail_interval = 10.0
-

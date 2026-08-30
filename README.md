@@ -10,10 +10,12 @@ the switch's web interface, so no browser is required.
 
 You need Docker with Compose and a host that can reach the switch.
 
-Create a working directory and an SSH key for the daemon administrator:
+Create a working directory, data directory, and SSH key for the daemon
+administrator:
 
 ```bash
-mkdir -p mercswitch/deploy/authorized_keys mercswitch/deploy/secrets
+mkdir -p mercswitch/data mercswitch/deploy/authorized_keys
+sudo chown 10001:10001 mercswitch/data
 cd mercswitch
 
 if [ ! -f "$HOME/.ssh/mercswitch_admin" ]; then
@@ -33,13 +35,12 @@ services:
     ports:
       - "${DAEMON_BIND_IP:?set DAEMON_BIND_IP}:2222:2222/tcp"
       - "${DAEMON_BIND_IP:?set DAEMON_BIND_IP}:1161:1161/udp"
+    environment:
+      MERCSWITCH_SWITCH_PASSWORD: ${MERCSWITCH_SWITCH_PASSWORD:?set MERCSWITCH_SWITCH_PASSWORD}
+      MERCSWITCH_SNMP_COMMUNITY: ${MERCSWITCH_SNMP_COMMUNITY:?set MERCSWITCH_SNMP_COMMUNITY}
     volumes:
-      - mercswitch-data:/var/lib/mercswitch
-      - ./deploy/mercswitchd.toml:/etc/mercswitch/mercswitchd.toml:ro
-      - ./deploy/authorized_keys:/etc/mercswitch/authorized_keys:ro
-    secrets:
-      - switch_password
-      - snmp_community
+      - ./data:/var/lib/mercswitch
+      - ./deploy:/etc/mercswitch:ro
     healthcheck:
       test: ["CMD", "mercswitchd", "healthcheck", "--data-dir", "/var/lib/mercswitch"]
       interval: 30s
@@ -48,15 +49,6 @@ services:
       start_period: 20s
     security_opt:
       - no-new-privileges:true
-
-volumes:
-  mercswitch-data:
-
-secrets:
-  switch_password:
-    file: ./deploy/secrets/switch_password
-  snmp_community:
-    file: ./deploy/secrets/snmp_community
 ```
 
 Save the following as `deploy/mercswitchd.toml`. Change the switch URL and
@@ -68,7 +60,6 @@ data_dir = "/var/lib/mercswitch"
 [device]
 url = "http://192.168.2.251/"
 username = "admin"
-password_file = "/run/secrets/switch_password"
 verify_tls = false
 
 [ssh]
@@ -89,7 +80,6 @@ authorized_keys_file = "/etc/mercswitch/authorized_keys/viewer"
 [snmp]
 host = "0.0.0.0"
 port = 1161
-community_file = "/run/secrets/snmp_community"
 name = "mercswitch"
 contact = ""
 location = ""
@@ -99,26 +89,19 @@ summary_interval = 15.0
 detail_interval = 10.0
 ```
 
-Create `.env` with the LAN address on which Docker should publish SSH and SNMP:
+Save `.env` beside `compose.yaml`. It contains the Docker host address, switch
+password, and SNMP community, so keep it private. Single-quote values containing
+characters such as `$` or `#`:
 
 ```dotenv
 DAEMON_BIND_IP=192.168.2.10
+MERCSWITCH_SWITCH_PASSWORD=change-me
+MERCSWITCH_SNMP_COMMUNITY=change-me
 MERCSWITCH_IMAGE=ghcr.io/yiprograms/mercswitch:latest
 ```
 
-Create the two Docker secrets. These commands prompt without displaying the
-values:
-
-```bash
-read -rsp 'Switch password: ' SWITCH_PASSWORD; printf '\n'
-printf '%s' "$SWITCH_PASSWORD" > deploy/secrets/switch_password
-unset SWITCH_PASSWORD
-
-read -rsp 'SNMP community: ' SNMP_COMMUNITY; printf '\n'
-printf '%s' "$SNMP_COMMUNITY" > deploy/secrets/snmp_community
-unset SNMP_COMMUNITY
-
-chmod 600 deploy/secrets/switch_password deploy/secrets/snmp_community
+```sh
+chmod 600 .env
 ```
 
 Start MercSwitch:
@@ -177,8 +160,9 @@ docker compose pull && docker compose up -d
 docker compose down
 ```
 
-The named volume preserves cached state, backups, journals, and the daemon SSH
-host key across container updates.
+The `./data` bind mount preserves cached state, backups, journals, and the daemon
+SSH host key across container updates. The other bind mount is the read-only
+`deploy` configuration directory.
 
 ## Standalone direct mode
 

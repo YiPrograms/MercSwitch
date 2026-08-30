@@ -7,6 +7,4 @@ dist/
 build/
 *.egg-info/
 .env
-deploy/secrets/*
-!deploy/secrets/.gitkeep
-
+data/

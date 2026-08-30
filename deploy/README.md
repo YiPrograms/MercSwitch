@@ -3,12 +3,17 @@
 Docker Compose is the default way to run `mercswitchd`. The container connects outbound to
 the switch, listens for SSH on TCP 2222, and serves read-only SNMPv2c on UDP 1161.
 
-1. Copy `.env.example` to `.env` and set `DAEMON_BIND_IP` to a specific LAN address on the
-   Docker host. Compose deliberately refuses to start when it is missing.
+1. Copy `.env.example` to `.env`, set the Docker host address, switch password, and SNMP
+   community, then run `chmod 600 .env`.
 2. Edit `deploy/mercswitchd.toml`. Add SSH public keys to
    `deploy/authorized_keys/admin` and/or `viewer`.
-3. Put only the switch password in `deploy/secrets/switch_password` and the SNMP community in
-   `deploy/secrets/snmp_community`. Do not commit these files.
+3. Create the bind-mounted data directory for the container's unprivileged UID:
+
+   ```sh
+   mkdir -p data
+   sudo chown 10001:10001 data
+   ```
+
 4. Pull and start the published GHCR image:
 
    ```sh
@@ -37,8 +42,8 @@ For Linux host networking, use:
 docker compose -f compose.yaml -f compose.host-network.yaml up -d
 ```
 
-The named volume holds the generated SSH host key, current state cache, native backups,
-operation journals, and health state. Both configuration and authorized-key mounts are
-read-only. The container runs as an unprivileged user with `no-new-privileges`.
+The `./data` bind mount holds the generated SSH host key, current state cache, native backups,
+operation journals, and health state. The whole `deploy` directory is mounted read-only. The
+container runs as an unprivileged user with `no-new-privileges`.
 
 Do not run `mercswitchctl` against a switch while `mercswitchd` manages it.
