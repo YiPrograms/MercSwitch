@@ -35,6 +35,24 @@ async def test_viewer_cannot_configure_or_write(sample_state):
 
 
 @pytest.mark.asyncio
+async def test_unambiguous_exec_command_abbreviations(sample_state):
+    session = CommandSession(FakeClient(), sample_state)  # type: ignore[arg-type]
+
+    assert "mercswitch-config" in await session.execute("show ru")
+    assert "ports " in await session.execute("sh st")
+    await session.execute("conf t")
+    assert session.config_mode
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_exec_command_abbreviation_is_rejected(sample_state):
+    session = CommandSession(FakeClient(), sample_state)  # type: ignore[arg-type]
+
+    with pytest.raises(MercSwitchError, match="ambiguous command 'c'.*configure, commit"):
+        await session.execute("c t")
+
+
+@pytest.mark.asyncio
 async def test_writer_lock_serializes_operations():
     lock = asyncio.Lock()
     active = 0

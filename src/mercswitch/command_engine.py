@@ -12,6 +12,59 @@ from .models import CandidateConfig, LagConfig, PortConfig, SwitchState, VlanCon
 Role = Literal["viewer", "admin"]
 
 
+def _resolve_keyword(word: str, choices: tuple[str, ...]) -> str:
+    lowered = word.lower()
+    if lowered in choices:
+        return lowered
+    matches = tuple(choice for choice in choices if choice.startswith(lowered))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise MercSwitchError(
+            f"ambiguous command '{word}': could be {', '.join(matches)}"
+        )
+    raise MercSwitchError(f"unknown command keyword: {word}")
+
+
+def normalize_exec_command(command: str) -> str:
+    """Expand unambiguous IOS-style command abbreviations."""
+    words = command.strip().split()
+    if not words or words == ["?"]:
+        return command.strip()
+    root = _resolve_keyword(
+        words[0],
+        ("show", "configure", "commit", "abort", "write", "exit", "logout", "quit", "help"),
+    )
+    if root == "show":
+        if len(words) != 2:
+            raise MercSwitchError("usage: show running-config|candidate-config|diff|status")
+        return f"show {_resolve_keyword(words[1], ('running-config', 'candidate-config', 'diff', 'status'))}"
+    if root == "configure":
+        if len(words) < 2:
+            raise MercSwitchError("usage: configure terminal|replace")
+        subcommand = _resolve_keyword(words[1], ("terminal", "replace"))
+        if subcommand == "terminal":
+            if len(words) != 2:
+                raise MercSwitchError("usage: configure terminal")
+            return "configure terminal"
+        if len(words) < 3:
+            raise MercSwitchError("usage: configure replace <file>")
+        return f"configure replace {' '.join(words[2:])}"
+    if root == "commit":
+        options = tuple(
+            _resolve_keyword(word, ("check", "force", "allow-management-change"))
+            for word in words[1:]
+        )
+        return " ".join(("commit", *options))
+    if root == "write":
+        if len(words) != 2 or _resolve_keyword(words[1], ("memory",)) != "memory":
+            raise MercSwitchError("usage: write memory")
+        return "write memory"
+    if len(words) != 1:
+        raise MercSwitchError(f"unexpected arguments after {root}")
+    return root
+
+
 class CommandSession:
     def __init__(
         self,
@@ -141,6 +194,7 @@ class CommandSession:
         if self.config_mode:
             self._require_admin()
             return self._configure(line)
+        line = normalize_exec_command(line)
         if line in {"exit", "logout", "quit"}:
             self.closed = True
             return ""

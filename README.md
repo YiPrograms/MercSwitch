@@ -134,6 +134,10 @@ write memory
 exit
 ```
 
+Commands accept unambiguous IOS-style abbreviations, for example `show ru`,
+`sh st`, `conf t`, and `wr m`. The standalone shell supports Up/Down history and
+saves up to 500 commands in its cache directory.
+
 Run a one-shot command or replace the managed configuration:
 
 ```sh

@@ -17,6 +17,11 @@ from .errors import MercSwitchError
 from .profiles import DeviceProfile, default_profile_path, load_profile
 from .storage import CacheStore, default_cache_root
 
+try:
+    import readline
+except ImportError:  # pragma: no cover - GNU readline is present in the Linux image
+    readline = None  # type: ignore[assignment]
+
 app = typer.Typer(
     help="Direct controller for compatible web-managed switches.", no_args_is_help=True
 )
@@ -261,6 +266,15 @@ def restore(
 
 @app.command()
 def shell(ctx: typer.Context) -> None:
+    history_path = ctx.obj.cache.root / "shell_history"
+    if readline is not None:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            readline.read_history_file(history_path)
+        except FileNotFoundError:
+            pass
+        readline.set_history_length(500)
+
     async def run(client: MercSwitchClient) -> None:
         session = CommandSession(client, await client.pull(), allow_local_files=True)
         while not session.closed:
@@ -281,6 +295,9 @@ def shell(ctx: typer.Context) -> None:
         asyncio.run(_with_client(ctx.obj, run))
     except Exception as exc:
         _fail(exc)
+    finally:
+        if readline is not None:
+            readline.write_history_file(history_path)
 
 
 if __name__ == "__main__":
