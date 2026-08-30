@@ -6,6 +6,7 @@ import pytest
 
 from mercswitch.command_engine import CommandSession
 from mercswitch.errors import MercSwitchError
+from mercswitch.models import VlanConfig
 
 
 class FakeClient:
@@ -50,6 +51,21 @@ async def test_ambiguous_exec_command_abbreviation_is_rejected(sample_state):
 
     with pytest.raises(MercSwitchError, match="ambiguous command 'c'.*configure, commit"):
         await session.execute("c t")
+
+
+@pytest.mark.asyncio
+async def test_interactive_switchport_trunk_semantics(sample_state):
+    session = CommandSession(FakeClient(), sample_state)  # type: ignore[arg-type]
+    session.candidate.vlans[2] = VlanConfig(2, "WAN")
+    await session.execute("configure terminal")
+    await session.execute("interface ethernet 1/0/9")
+    await session.execute("switchport mode trunk")
+    await session.execute("switchport trunk native vlan 1")
+    await session.execute("switchport trunk allowed vlan 1-2")
+
+    assert session.candidate.ports[9].pvid == 1
+    assert 9 in session.candidate.vlans[1].untagged
+    assert 9 in session.candidate.vlans[2].tagged
 
 
 @pytest.mark.asyncio

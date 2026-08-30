@@ -21,6 +21,55 @@ def test_parse_render_round_trip(sample_state):
     validate_candidate(candidate, sample_state.capabilities)
 
 
+def test_render_uses_access_and_trunk_switchport_semantics(sample_state):
+    sample_state.vlans[2] = VlanConfig(2, "WAN", tagged=(9,))
+    rendered = render_config(sample_state)
+
+    assert " tagged ports " not in rendered
+    assert " untagged ports " not in rendered
+    assert " switchport mode access\n switchport access vlan 1" in rendered
+    assert " switchport mode trunk\n switchport trunk native vlan 1" in rendered
+    assert " switchport trunk allowed vlan 1-2" in rendered
+
+    candidate = parse_config(rendered)
+    assert candidate.ports == CandidateConfig.from_state(sample_state).ports
+    assert candidate.vlans == CandidateConfig.from_state(sample_state).vlans
+
+
+def test_hybrid_switchport_round_trip_for_multiple_untagged_vlans(sample_state):
+    sample_state.vlans[2] = VlanConfig(2, "Legacy", untagged=(1,))
+    rendered = render_config(sample_state)
+
+    assert " switchport mode hybrid" in rendered
+    assert " switchport hybrid pvid vlan 1" in rendered
+    assert " switchport hybrid untagged vlan 1-2" in rendered
+    assert parse_config(rendered).vlans == CandidateConfig.from_state(sample_state).vlans
+
+
+def test_legacy_vlan_membership_syntax_remains_readable():
+    candidate = parse_config(
+        """! mercswitch-config v1
+interface vlan 1
+ ip address dhcp
+!
+vlan 1
+ name Default
+ tagged ports none
+ untagged ports 1
+!
+interface ethernet 1/0/1
+ no shutdown
+ speed auto
+ no flow-control
+ switchport pvid 1
+!
+"""
+    )
+
+    assert candidate.ports[1].pvid == 1
+    assert candidate.vlans[1].untagged == (1,)
+
+
 def test_port_range_parser():
     assert parse_ports("1-4,7,9") == (1, 2, 3, 4, 7, 9)
 

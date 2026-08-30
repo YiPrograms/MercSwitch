@@ -5,7 +5,14 @@ from pathlib import Path
 from typing import Literal
 
 from .client import MercSwitchClient
-from .config import config_diff, parse_config, parse_ports, render_config
+from .config import (
+    config_diff,
+    parse_config,
+    parse_ports,
+    port_vlan_memberships,
+    render_config,
+    set_port_vlan_memberships,
+)
 from .errors import MercSwitchError
 from .models import CandidateConfig, LagConfig, PortConfig, SwitchState, VlanConfig
 
@@ -177,6 +184,59 @@ class CommandSession:
                 self.candidate.ports[ident] = replace(port, flow_control=line == "flow-control")
             elif line.startswith("switchport pvid "):
                 self.candidate.ports[ident] = replace(port, pvid=int(line.split()[2]))
+            elif line == "switchport mode access":
+                set_port_vlan_memberships(
+                    self.candidate.vlans, ident, untagged=(port.pvid,)
+                )
+            elif line in {"switchport mode trunk", "switchport mode hybrid"}:
+                pass
+            elif line.startswith("switchport access vlan "):
+                vid = int(line.rsplit(" ", 1)[1])
+                self.candidate.ports[ident] = replace(port, pvid=vid)
+                set_port_vlan_memberships(self.candidate.vlans, ident, untagged=(vid,))
+            elif line.startswith("switchport trunk native vlan "):
+                native = int(line.rsplit(" ", 1)[1])
+                tagged, untagged = port_vlan_memberships(self.candidate.vlans, ident)
+                allowed = tuple(sorted(set(tagged) | set(untagged) | {native}))
+                self.candidate.ports[ident] = replace(port, pvid=native)
+                set_port_vlan_memberships(
+                    self.candidate.vlans,
+                    ident,
+                    tagged=tuple(vid for vid in allowed if vid != native),
+                    untagged=(native,),
+                )
+            elif line.startswith("switchport trunk allowed vlan "):
+                allowed = parse_ports(line[30:])
+                if port.pvid not in allowed:
+                    raise MercSwitchError("trunk native VLAN must be in allowed VLANs")
+                set_port_vlan_memberships(
+                    self.candidate.vlans,
+                    ident,
+                    tagged=tuple(vid for vid in allowed if vid != port.pvid),
+                    untagged=(port.pvid,),
+                )
+            elif line.startswith("switchport hybrid pvid vlan "):
+                pvid = int(line.rsplit(" ", 1)[1])
+                tagged, untagged = port_vlan_memberships(self.candidate.vlans, ident)
+                self.candidate.ports[ident] = replace(port, pvid=pvid)
+                set_port_vlan_memberships(
+                    self.candidate.vlans,
+                    ident,
+                    tagged=tuple(vid for vid in tagged if vid != pvid),
+                    untagged=tuple(sorted(set(untagged) | {pvid})),
+                )
+            elif line.startswith("switchport hybrid tagged vlan "):
+                tagged = parse_ports(line[30:])
+                _, untagged = port_vlan_memberships(self.candidate.vlans, ident)
+                set_port_vlan_memberships(
+                    self.candidate.vlans, ident, tagged=tagged, untagged=untagged
+                )
+            elif line.startswith("switchport hybrid untagged vlan "):
+                untagged = parse_ports(line[32:])
+                tagged, _ = port_vlan_memberships(self.candidate.vlans, ident)
+                set_port_vlan_memberships(
+                    self.candidate.vlans, ident, tagged=tagged, untagged=untagged
+                )
             else:
                 raise MercSwitchError(f"unsupported port command: {line}")
         elif kind == "lag":
