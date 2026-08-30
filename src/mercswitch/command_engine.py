@@ -21,6 +21,37 @@ from .models import CandidateConfig, LagConfig, PortConfig, SwitchState, VlanCon
 Role = Literal["viewer", "admin"]
 
 
+def _format_hints(hints: tuple[tuple[str, str], ...], fragment: str = "") -> str:
+    matches = tuple(item for item in hints if item[0].startswith(fragment.lower()))
+    if not matches:
+        return "% no matching commands\n"
+    width = max(len(keyword) for keyword, _ in matches)
+    return "".join(f"  {keyword:<{width}}  {description}\n" for keyword, description in matches)
+
+
+EXEC_HINTS = (
+    ("show", "Show running system information"),
+    ("configure", "Enter configuration mode or replace configuration"),
+    ("commit", "Validate and apply the candidate configuration"),
+    ("abort", "Discard candidate changes"),
+    ("write", "Save configuration to flash"),
+    ("exit", "Close the session"),
+    ("help", "Show command summary"),
+)
+SHOW_HINTS = (
+    ("running-config", "Current switch configuration"),
+    ("candidate-config", "Candidate configuration"),
+    ("diff", "Candidate changes"),
+    ("status", "Device summary"),
+    ("interfaces", "Interface status and details"),
+    ("vlan", "VLAN information"),
+    ("port-channel", "Link aggregation groups"),
+    ("ip", "Management IP information"),
+    ("version", "Hardware and firmware version"),
+    ("capabilities", "Discovered hardware capabilities"),
+)
+
+
 def _resolve_keyword(word: str, choices: tuple[str, ...]) -> str:
     lowered = word.lower()
     if lowered in choices:
@@ -151,6 +182,123 @@ class CommandSession:
     def _require_admin(self) -> None:
         if self.role != "admin":
             raise MercSwitchError("this command requires the admin role")
+
+    def _help_hint(self, query: str) -> str:
+        before_question = query.rsplit("?", 1)[0]
+        next_token = before_question.endswith((" ", "\t"))
+        words = before_question.strip().lower().split()
+        if self.config_mode:
+            return self._config_help_hint(words, next_token)
+        if not words:
+            return _format_hints(EXEC_HINTS)
+        if len(words) == 1 and not next_token:
+            return _format_hints(EXEC_HINTS, words[0])
+        root = _resolve_keyword(words[0], tuple(keyword for keyword, _ in EXEC_HINTS))
+        if root == "show":
+            if len(words) == 1:
+                return _format_hints(SHOW_HINTS)
+            if len(words) == 2 and not next_token:
+                return _format_hints(SHOW_HINTS, words[1])
+            subcommand = _resolve_keyword(
+                words[1], tuple(keyword for keyword, _ in SHOW_HINTS)
+            )
+            if subcommand == "interfaces":
+                return _format_hints(
+                    (("status", "Interface summary"), ("ethernet", "Specific interface")),
+                    "" if next_token else words[-1],
+                )
+            if subcommand == "vlan":
+                return _format_hints(
+                    (("brief", "VLAN summary"), ("id", "Specific VLAN")),
+                    "" if next_token else words[-1],
+                )
+            if subcommand == "ip":
+                return _format_hints((("interface", "Management interface"),))
+            return "  <cr>  Execute the command\n"
+        if root == "configure":
+            return _format_hints(
+                (("terminal", "Enter configuration mode"), ("replace", "Load configuration"))
+            )
+        if root == "commit":
+            return _format_hints(
+                (
+                    ("check", "Validate without applying"),
+                    ("force", "Ignore cached-state drift"),
+                    ("allow-management-change", "Permit management readdressing"),
+                    ("<cr>", "Commit now"),
+                )
+            )
+        if root == "write":
+            return _format_hints((("memory", "Save configuration to flash"),))
+        return "  <cr>  Execute the command\n"
+
+    def _config_help_hint(self, words: list[str], next_token: bool) -> str:
+        if self.context is None:
+            hints = (
+                ("interface", "Select an interface"),
+                ("vlan", "Create or select a VLAN"),
+                ("no", "Remove configuration"),
+                ("abort", "Discard candidate changes"),
+                ("end", "Return to privileged mode"),
+                ("exit", "Return to privileged mode"),
+            )
+            if not words:
+                return _format_hints(hints)
+            if words[0] == "interface" and (len(words) == 1 or next_token):
+                return _format_hints(
+                    (
+                        ("ethernet", "Physical interface"),
+                        ("port-channel", "Link aggregation interface"),
+                        ("vlan", "Management VLAN interface"),
+                    )
+                )
+            return _format_hints(hints, words[-1] if not next_token else "")
+        kind, _ = self.context
+        common = (("exit", "Leave this section"), ("end", "Leave this section"))
+        if kind == "port":
+            if words and words[0] == "switchport":
+                if len(words) >= 2 and words[1] == "trunk":
+                    return _format_hints(
+                        (("native", "Set native VLAN"), ("allowed", "Set allowed VLANs"))
+                    )
+                if len(words) >= 2 and words[1] == "hybrid":
+                    return _format_hints(
+                        (
+                            ("pvid", "Set ingress PVID"),
+                            ("tagged", "Set tagged VLANs"),
+                            ("untagged", "Set untagged VLANs"),
+                        )
+                    )
+                return _format_hints(
+                    (
+                        ("mode", "Set access, trunk, or hybrid mode"),
+                        ("access", "Set access VLAN"),
+                        ("trunk", "Set trunk VLANs"),
+                        ("hybrid", "Set hybrid VLANs"),
+                    )
+                )
+            hints = (
+                ("shutdown", "Disable the interface"),
+                ("no", "Negate a command"),
+                ("speed", "Set configured speed"),
+                ("flow-control", "Enable flow control"),
+                ("switchport", "Configure VLAN behavior"),
+                *common,
+            )
+        elif kind == "vlan":
+            hints = (("name", "Set VLAN name"), ("no", "Remove VLAN name"), *common)
+        elif kind == "management":
+            hints = (
+                ("ip", "Configure management addressing"),
+                ("management", "Configure fallback IP"),
+                ("no", "Negate a command"),
+                *common,
+            )
+        else:
+            hints = (("members", "Set member ports"), *common)
+        if not words:
+            return _format_hints(hints)
+        return _format_hints(hints, words[-1] if not next_token else "")
 
     def _switchport_description(self, index: int) -> tuple[str, str, str]:
         port = self.running.ports[index]
@@ -364,6 +512,8 @@ class CommandSession:
         line = command.strip()
         if not line:
             return ""
+        if "?" in line:
+            return self._help_hint(command)
         if self.config_mode:
             self._require_admin()
             return self._configure(line)

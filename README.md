@@ -146,6 +146,9 @@ Commands accept unambiguous IOS-style abbreviations, for example `show ru`,
 `sh st`, `conf t`, and `wr m`. The standalone shell supports Up/Down history and
 saves up to 500 commands in its cache directory.
 
+Enter `?` for top-level help or append it after a command prefix for contextual
+hints, such as `show ?`, `show int ?`, or `switchport trunk ?`.
+
 VLAN membership uses interface-centric switchport semantics:
 
 ```text

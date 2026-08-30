@@ -105,6 +105,37 @@ async def test_show_rejects_missing_interface_and_ambiguous_v_prefix(sample_stat
 
 
 @pytest.mark.asyncio
+async def test_question_mark_gives_contextual_help_hints(sample_state):
+    session = CommandSession(FakeClient(), sample_state)  # type: ignore[arg-type]
+
+    top = await session.execute("?")
+    show = await session.execute("show ?")
+    interfaces = await session.execute("sh int ?")
+    vlan_prefix = await session.execute("show vl b?")
+
+    assert "show" in top and "configure" in top
+    assert "running-config" in show and "interfaces" in show
+    assert "status" in interfaces and "ethernet" in interfaces
+    assert "brief" in vlan_prefix and "id" not in vlan_prefix
+
+
+@pytest.mark.asyncio
+async def test_question_mark_uses_configuration_context(sample_state):
+    session = CommandSession(FakeClient(), sample_state)  # type: ignore[arg-type]
+    await session.execute("configure terminal")
+    global_hints = await session.execute("interface ?")
+    await session.execute("interface ethernet 1/0/1")
+    port_hints = await session.execute("?")
+    switchport_hints = await session.execute("switchport ?")
+    trunk_hints = await session.execute("switchport trunk ?")
+
+    assert "ethernet" in global_hints and "port-channel" in global_hints
+    assert "shutdown" in port_hints and "switchport" in port_hints
+    assert "mode" in switchport_hints and "trunk" in switchport_hints
+    assert "native" in trunk_hints and "allowed" in trunk_hints
+
+
+@pytest.mark.asyncio
 async def test_writer_lock_serializes_operations():
     lock = asyncio.Lock()
     active = 0
