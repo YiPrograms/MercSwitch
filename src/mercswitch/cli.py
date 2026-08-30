@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
 from rich.console import Console
 
@@ -62,8 +63,24 @@ async def _with_client(ctx: Context, action):
         return await action(client)
 
 
+def _error_message(exc: Exception) -> str:
+    if isinstance(exc, httpx.TimeoutException):
+        request = exc.request
+        return (
+            f"{type(exc).__name__}: timed out requesting "
+            f"{request.method} {request.url}; check container network access to the switch"
+        )
+    if isinstance(exc, httpx.ConnectError):
+        request = exc.request
+        return (
+            f"{type(exc).__name__}: could not connect to "
+            f"{request.url}; check the address and container network"
+        )
+    return str(exc).strip() or type(exc).__name__
+
+
 def _fail(exc: Exception) -> None:
-    console.print(f"[red]error:[/red] {exc}", highlight=False)
+    console.print(f"[red]error:[/red] {_error_message(exc)}", highlight=False)
     raise typer.Exit(1)
 
 

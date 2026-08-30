@@ -167,18 +167,28 @@ SSH host key across container updates. The other bind mount is the read-only
 ## Standalone direct mode
 
 Use `mercswitchctl` for one-time administration when the daemon is not managing
-the switch. It connects directly and prompts for the switch password:
+the switch. It connects directly and prompts for the switch password. Host
+networking is needed when the Docker bridge cannot route to the switch LAN:
 
 ```sh
 docker run --rm -it \
+  --network host \
   --entrypoint mercswitchctl \
   ghcr.io/yiprograms/mercswitch:latest \
   --url http://192.168.2.251/ probe
 
 docker run --rm -it \
+  --network host \
   --entrypoint mercswitchctl \
   ghcr.io/yiprograms/mercswitch:latest \
   --url http://192.168.2.251/ shell
+```
+
+If the daemon logs an HTTP timeout with the default bridge network, use the
+included Linux host-network override:
+
+```sh
+docker compose -f compose.yaml -f compose.host-network.yaml up -d
 ```
 
 ## Safety and device support
