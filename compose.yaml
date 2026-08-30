@@ -1,7 +1,6 @@
 services:
   mercswitchd:
-    build: .
-    image: mercswitch:latest
+    image: ${MERCSWITCH_IMAGE:-ghcr.io/yiprograms/mercswitch:latest}
     restart: unless-stopped
     ports:
       - "${DAEMON_BIND_IP:?set DAEMON_BIND_IP}:2222:2222/tcp"
