@@ -429,10 +429,6 @@ class CommandSession:
                 self.candidate.vlans[ident] = replace(vlan, name=line[5:])
             elif line == "no name":
                 self.candidate.vlans[ident] = replace(vlan, name="")
-            elif line.startswith("tagged ports "):
-                self.candidate.vlans[ident] = replace(vlan, tagged=parse_ports(line[13:]))
-            elif line.startswith("untagged ports "):
-                self.candidate.vlans[ident] = replace(vlan, untagged=parse_ports(line[15:]))
             else:
                 raise MercSwitchError(f"unsupported VLAN command: {line}")
         elif kind == "port":
@@ -443,8 +439,6 @@ class CommandSession:
                 self.candidate.ports[ident] = replace(port, speed=line.split()[1])  # type: ignore[arg-type]
             elif line in {"flow-control", "no flow-control"}:
                 self.candidate.ports[ident] = replace(port, flow_control=line == "flow-control")
-            elif line.startswith("switchport pvid "):
-                self.candidate.ports[ident] = replace(port, pvid=int(line.split()[2]))
             elif line == "switchport mode access":
                 set_port_vlan_memberships(
                     self.candidate.vlans, ident, untagged=(port.pvid,)

@@ -168,9 +168,8 @@ interface ethernet 1/0/9
 !
 ```
 
-Legacy `switchport pvid`, `tagged ports`, and `untagged ports` configurations
-remain readable. MercSwitch renders `switchport mode hybrid` only for firmware
-states which cannot be represented as access or trunk.
+MercSwitch renders `switchport mode hybrid` only for firmware states which
+cannot be represented as access or trunk.
 
 Run a one-shot command or replace the managed configuration:
 

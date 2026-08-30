@@ -16,7 +16,7 @@ from .models import (
     VlanConfig,
 )
 
-CONFIG_HEADER = "! mercswitch-config v1"
+CONFIG_HEADER = "! mercswitch-config v2"
 SPEEDS = {
     "auto",
     "10-half",
@@ -164,8 +164,6 @@ def parse_config(text: str, *, base_hash: str = "") -> CandidateConfig:
     vlans: dict[int, VlanConfig] = {}
     lags: dict[int, LagConfig] = {}
     switchports: dict[int, dict[str, object]] = {}
-    legacy_memberships = False
-    modern_memberships = False
     context: tuple[str, int] | None = None
 
     for number, raw in enumerate(text.splitlines(), 1):
@@ -225,12 +223,6 @@ def parse_config(text: str, *, base_hash: str = "") -> CandidateConfig:
                     vlans[ident] = replace(vlan, name=line[5:])
                 elif line == "no name":
                     vlans[ident] = replace(vlan, name="")
-                elif line.startswith("tagged ports "):
-                    vlans[ident] = replace(vlan, tagged=parse_ports(line[13:]))
-                    legacy_memberships = True
-                elif line.startswith("untagged ports "):
-                    vlans[ident] = replace(vlan, untagged=parse_ports(line[15:]))
-                    legacy_memberships = True
                 else:
                     raise ParseError(f"line {number}: unsupported VLAN command: {line}")
             elif kind == "port":
@@ -244,33 +236,23 @@ def parse_config(text: str, *, base_hash: str = "") -> CandidateConfig:
                     ports[ident] = replace(port, speed=speed)  # type: ignore[arg-type]
                 elif line in {"flow-control", "no flow-control"}:
                     ports[ident] = replace(port, flow_control=line == "flow-control")
-                elif line.startswith("switchport pvid "):
-                    ports[ident] = replace(port, pvid=int(line.rsplit(" ", 1)[1]))
-                    legacy_memberships = True
                 elif line.startswith("switchport mode "):
                     mode = line.rsplit(" ", 1)[1]
                     if mode not in {"access", "trunk", "hybrid"}:
                         raise ParseError(f"line {number}: unsupported switchport mode: {mode}")
                     switchports[ident]["mode"] = mode
-                    modern_memberships = True
                 elif line.startswith("switchport access vlan "):
                     switchports[ident]["access"] = int(line.rsplit(" ", 1)[1])
-                    modern_memberships = True
                 elif line.startswith("switchport trunk native vlan "):
                     switchports[ident]["native"] = int(line.rsplit(" ", 1)[1])
-                    modern_memberships = True
                 elif line.startswith("switchport trunk allowed vlan "):
                     switchports[ident]["allowed"] = parse_ports(line[30:])
-                    modern_memberships = True
                 elif line.startswith("switchport hybrid pvid vlan "):
                     switchports[ident]["pvid"] = int(line.rsplit(" ", 1)[1])
-                    modern_memberships = True
                 elif line.startswith("switchport hybrid tagged vlan "):
                     switchports[ident]["tagged"] = parse_ports(line[30:])
-                    modern_memberships = True
                 elif line.startswith("switchport hybrid untagged vlan "):
                     switchports[ident]["untagged"] = parse_ports(line[32:])
-                    modern_memberships = True
                 else:
                     raise ParseError(f"line {number}: unsupported port command: {line}")
             elif kind == "lag":
@@ -283,37 +265,32 @@ def parse_config(text: str, *, base_hash: str = "") -> CandidateConfig:
 
     if management is None:
         raise ParseError("missing management interface")
-    if modern_memberships and legacy_memberships:
-        raise ParseError("cannot mix interface switchport VLAN syntax with legacy VLAN membership syntax")
-    if modern_memberships:
-        for index, settings in switchports.items():
-            mode = settings.get("mode")
-            if mode is None:
-                raise ParseError(f"port {index} is missing switchport mode")
-            if mode == "access":
-                access = int(settings.get("access", 1))
-                ports[index] = replace(ports[index], pvid=access)
-                set_port_vlan_memberships(vlans, index, untagged=(access,))
-            elif mode == "trunk":
-                native = int(settings.get("native", 1))
-                allowed = tuple(settings.get("allowed", tuple(sorted(vlans))))
-                if native not in allowed:
-                    raise ParseError(f"port {index} trunk native VLAN must be in allowed VLANs")
-                ports[index] = replace(ports[index], pvid=native)
-                set_port_vlan_memberships(
-                    vlans,
-                    index,
-                    tagged=tuple(vid for vid in allowed if vid != native),
-                    untagged=(native,),
-                )
-            else:
-                pvid = int(settings.get("pvid", 1))
-                tagged = tuple(settings.get("tagged", ()))
-                untagged = tuple(settings.get("untagged", (pvid,)))
-                ports[index] = replace(ports[index], pvid=pvid)
-                set_port_vlan_memberships(
-                    vlans, index, tagged=tagged, untagged=untagged
-                )
+    for index, settings in switchports.items():
+        mode = settings.get("mode")
+        if mode is None:
+            raise ParseError(f"port {index} is missing switchport mode")
+        if mode == "access":
+            access = int(settings.get("access", 1))
+            ports[index] = replace(ports[index], pvid=access)
+            set_port_vlan_memberships(vlans, index, untagged=(access,))
+        elif mode == "trunk":
+            native = int(settings.get("native", 1))
+            allowed = tuple(settings.get("allowed", tuple(sorted(vlans))))
+            if native not in allowed:
+                raise ParseError(f"port {index} trunk native VLAN must be in allowed VLANs")
+            ports[index] = replace(ports[index], pvid=native)
+            set_port_vlan_memberships(
+                vlans,
+                index,
+                tagged=tuple(vid for vid in allowed if vid != native),
+                untagged=(native,),
+            )
+        else:
+            pvid = int(settings.get("pvid", 1))
+            tagged = tuple(settings.get("tagged", ()))
+            untagged = tuple(settings.get("untagged", (pvid,)))
+            ports[index] = replace(ports[index], pvid=pvid)
+            set_port_vlan_memberships(vlans, index, tagged=tagged, untagged=untagged)
     return CandidateConfig(management, ports, vlans, lags, True, base_hash)
 
 

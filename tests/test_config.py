@@ -46,28 +46,39 @@ def test_hybrid_switchport_round_trip_for_multiple_untagged_vlans(sample_state):
     assert parse_config(rendered).vlans == CandidateConfig.from_state(sample_state).vlans
 
 
-def test_legacy_vlan_membership_syntax_remains_readable():
-    candidate = parse_config(
-        """! mercswitch-config v1
+@pytest.mark.parametrize("legacy_command", ["tagged ports 1", "untagged ports 1"])
+def test_legacy_vlan_membership_syntax_is_rejected(legacy_command):
+    text = render_config_stub().replace(" name Default", f" name Default\n {legacy_command}")
+    with pytest.raises(ParseError, match="unsupported VLAN command"):
+        parse_config(text)
+
+
+def test_legacy_pvid_syntax_and_v1_header_are_rejected():
+    with pytest.raises(ParseError, match="mercswitch-config v2"):
+        parse_config(render_config_stub().replace("v2", "v1", 1))
+    text = render_config_stub().replace(
+        " switchport mode access", " switchport pvid 1\n switchport mode access"
+    )
+    with pytest.raises(ParseError, match="unsupported port command"):
+        parse_config(text)
+
+
+def render_config_stub() -> str:
+    return """! mercswitch-config v2
 interface vlan 1
  ip address dhcp
 !
 vlan 1
  name Default
- tagged ports none
- untagged ports 1
 !
 interface ethernet 1/0/1
  no shutdown
  speed auto
  no flow-control
- switchport pvid 1
+ switchport mode access
+ switchport access vlan 1
 !
 """
-    )
-
-    assert candidate.ports[1].pvid == 1
-    assert candidate.vlans[1].untagged == (1,)
 
 
 def test_port_range_parser():
