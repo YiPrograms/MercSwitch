@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mercswitch"
+version = "0.1.0"
+description = "CLI, SSH, and SNMP management for MERCURY/TP-Link/FAST web-managed switches"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "mercswitch contributors" }]
+dependencies = [
+  "argon2-cffi>=23.1",
+  "asyncssh>=2.14",
+  "httpx>=0.27",
+  "json5>=0.9",
+  "pysnmp>=7.1",
+  "rich>=13.7",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+keyring = ["keyring>=25"]
+test = [
+  "pytest>=8.2",
+  "pytest-asyncio>=0.23",
+  "respx>=0.21",
+]
+
+[project.scripts]
+mercswitchctl = "mercswitch.cli:app"
+mercswitchd = "mercswitch.daemon_cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mercswitch"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# These boundaries intentionally translate arbitrary library/parser failures
+# into CLI errors, daemon health state, or dropped malformed datagrams.
+ignore = ["B008", "BLE001"]

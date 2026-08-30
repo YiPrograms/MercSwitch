@@ -1,0 +1,35 @@
+data_dir = "/var/lib/mercswitch"
+
+[device]
+url = "http://192.168.2.251/"
+username = "admin"
+password_file = "/run/secrets/switch_password"
+verify_tls = false
+
+[ssh]
+host = "0.0.0.0"
+port = 2222
+host_key = "/var/lib/mercswitch/ssh_host_ed25519_key"
+
+[ssh.users.admin]
+role = "admin"
+password_hash = ""
+authorized_keys_file = "/etc/mercswitch/authorized_keys/admin"
+
+[ssh.users.viewer]
+role = "viewer"
+password_hash = ""
+authorized_keys_file = "/etc/mercswitch/authorized_keys/viewer"
+
+[snmp]
+host = "0.0.0.0"
+port = 1161
+community_file = "/run/secrets/snmp_community"
+name = "mercswitch"
+contact = ""
+location = ""
+
+[poll]
+summary_interval = 15.0
+detail_interval = 10.0
+

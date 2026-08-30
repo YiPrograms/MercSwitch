@@ -1,0 +1,32 @@
+services:
+  mercswitchd:
+    build: .
+    image: mercswitch:latest
+    restart: unless-stopped
+    ports:
+      - "${DAEMON_BIND_IP:?set DAEMON_BIND_IP}:2222:2222/tcp"
+      - "${DAEMON_BIND_IP:?set DAEMON_BIND_IP}:1161:1161/udp"
+    volumes:
+      - mercswitch-data:/var/lib/mercswitch
+      - ./deploy/mercswitchd.toml:/etc/mercswitch/mercswitchd.toml:ro
+      - ./deploy/authorized_keys:/etc/mercswitch/authorized_keys:ro
+    secrets:
+      - switch_password
+      - snmp_community
+    healthcheck:
+      test: ["CMD", "mercswitchd", "healthcheck", "--data-dir", "/var/lib/mercswitch"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  mercswitch-data:
+
+secrets:
+  switch_password:
+    file: ./deploy/secrets/switch_password
+  snmp_community:
+    file: ./deploy/secrets/snmp_community

@@ -1,0 +1,5 @@
+services:
+  mercswitchd:
+    network_mode: host
+    ports: !reset []
+
